@@ -13,8 +13,3 @@ time.sleep(10)
 # 4. Kapat
 driver.quit()
 
-from selenium import webdriver
-import time
-
-driver = webdriver.Chrome()
-driver.get("http://www.seyyahlab.com")
