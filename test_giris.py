@@ -16,10 +16,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 class SeyyahLabBot:
     def __init__(self, headless=False):
-        """
-        Botu başlatır ve tarayıcı ayarlarını yapar.
-        :param headless: True ise tarayıcı arayüzü açılmadan arka planda çalışır.
-        """
         self.base_url = "https://seyyahlab.com"
         self.data = {
             "tarama_zamani": str(datetime.now()),
@@ -36,6 +32,7 @@ class SeyyahLabBot:
             chrome_options.add_argument("--headless")
         chrome_options.add_argument("--start-maximized")
         chrome_options.add_argument("--disable-notifications")
+        # Anti-tespit için User-Agent
         chrome_options.add_argument(
             "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
@@ -100,9 +97,10 @@ class SeyyahLabBot:
 
     def link_ve_gorsel_analizi(self):
         """
-        GÜNCELLENMİŞ: Hem img etiketlerini hem de CSS background-image kullananları analiz eder.
+        GÜNCELLENMİŞ (AĞIR SİLAH): JavaScript kullanarak Computed Style (Hesaplanmış Stil)
+        üzerinden tüm arka plan resimlerini ve SVG'leri zorla çeker.
         """
-        logging.info("Link ve Görsel analizi yapılıyor (Gelişmiş)...")
+        logging.info("Link ve Görsel analizi yapılıyor (JavaScript Destekli)...")
 
         # --- LİNKLER ---
         elements = self.driver.find_elements(By.TAG_NAME, "a")
@@ -121,33 +119,54 @@ class SeyyahLabBot:
         self.data["linkler"]["toplam"] = len(self.data["linkler"]["ic_linkler"]) + len(
             self.data["linkler"]["dis_linkler"])
 
-        # --- GÖRSELLER (Geliştirilmiş Bölüm) ---
+        # --- GÖRSELLER (JavaScript Enjeksiyonu) ---
         self.data["gorseller"] = []
 
-        # 1. Standart <img> etiketleri
-        images = self.driver.find_elements(By.TAG_NAME, "img")
-        for img in images:
-            src = img.get_attribute("src")
-            alt = img.get_attribute("alt")
-            if src:
+        # 1. JavaScript ile sayfadaki TÜM elementlerin hesaplanmış stillerini tara
+        # Bu yöntem class içine gizlenmiş resimleri de bulur.
+        js_script = """
+        var images = [];
+
+        // A) Normal IMG etiketleri
+        var imgs = document.getElementsByTagName('img');
+        for(var i=0; i<imgs.length; i++) {
+            if(imgs[i].src) images.push({src: imgs[i].src, type: 'img_tag'});
+        }
+
+        // B) CSS Arka Plan Resimleri (Computed Style)
+        var all = document.getElementsByTagName('*');
+        for(var i=0; i<all.length; i++) {
+            var bg = window.getComputedStyle(all[i]).backgroundImage;
+            if (bg !== 'none' && bg.startsWith('url')) {
+                // url("...") kısmını temizle
+                var cleanUrl = bg.slice(4, -1).replace(/["']/g, "");
+                images.push({src: cleanUrl, type: 'css_background'});
+            }
+        }
+        return images;
+        """
+
+        found_images = self.driver.execute_script(js_script)
+
+        # Tekrarlayan resimleri temizle (set kullanarak)
+        seen_urls = set()
+        for img in found_images:
+            if img['src'] not in seen_urls:
                 self.data["gorseller"].append({
-                    "tip": "img_tag",
-                    "src": src,
-                    "alt_text": alt if alt else "⚠️ ALT YOK"
+                    "tip": img['type'],
+                    "src": img['src'],
+                    "alt_text": "JS ile bulundu"
                 })
+                seen_urls.add(img['src'])
 
-        # 2. CSS Background Image olan div/span/section'lar
-        bg_images = self.driver.find_elements(By.XPATH, "//*[contains(@style, 'background-image')]")
-        for bg in bg_images:
-            style = bg.get_attribute("style")
-            # style stringi içinden url'i basitçe alıyoruz
-            self.data["gorseller"].append({
-                "tip": "css_background",
-                "src": style,
-                "alt_text": "CSS Background (Alt etiketi olmaz)"
-            })
+        # C) SVG Kontrolü (Grafik/İkon var mı?)
+        svgs = self.driver.find_elements(By.TAG_NAME, "svg")
+        if len(svgs) > 0:
+            logging.info(f"{len(svgs)} adet SVG elementi bulundu (İkonlar/Grafikler).")
+            # SVG'leri görsel sayısına dahil etmiyoruz ama logluyoruz,
+            # çünkü bunlar genellikle "fotoğraf" değildir.
 
-        logging.info(f"Toplam {len(self.data['gorseller'])} görsel (img + css) bulundu.")
+        logging.info(f"Toplam {len(self.data['gorseller'])} görsel URL'i (img + css background) yakalandı.")
 
     def arama_testi(self, arama_terimi="Gezi"):
         try:
@@ -178,7 +197,7 @@ class SeyyahLabBot:
         print(f"\n📊 TARAMA ÖZETİ:")
         print(f"   - Başlık: {self.data['meta_bilgileri'].get('title')}")
         print(f"   - Toplam Link: {self.data['linkler']['toplam']}")
-        print(f"   - Toplam Görsel: {len(self.data['gorseller'])}")
+        print(f"   - Toplam Görsel (CSS Dahil): {len(self.data['gorseller'])}")
         print(f"   - İçerik Kartları: {len(self.data['icerik'])}")
 
         self.driver.quit()
@@ -192,5 +211,5 @@ if __name__ == "__main__":
     bot.seo_analizi_yap()
     bot.arama_testi("İstanbul Rehberi")
     bot.icerik_taramasi()
-    bot.link_ve_gorsel_analizi()  # Yeni fonksiyon çalışacak
+    bot.link_ve_gorsel_analizi()
     bot.raporla_ve_kapat()
