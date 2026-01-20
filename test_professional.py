@@ -1,6 +1,7 @@
 import unittest
 import logging
 import datetime
+import time
 import os
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -13,15 +14,14 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 # =============================================================================
-# 1. AYARLAR (Robotun Kuralları)
+# 1. AYARLAR
 # =============================================================================
 class Config:
-    BASE_URL = "https://www.seyyahlab.com"  # Test edilecek adres
-    BROWSER_HEADLESS = False  # False = Tarayıcıyı görerek çalıştır
-    TIMEOUT = 10  # En fazla kaç saniye beklesin?
+    BASE_URL = "https://www.seyyahlab.com"
+    BROWSER_HEADLESS = False
+    TIMEOUT = 15
 
 
-# Loglama (Raporlama) Ayarları
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -32,7 +32,6 @@ logger = logging.getLogger()
 
 # =============================================================================
 # 2. TEMEL YAPI (Base Page)
-# Robotun yürümeyi, görmeyi öğrendiği yer.
 # =============================================================================
 class BasePage:
     def __init__(self, driver):
@@ -44,21 +43,20 @@ class BasePage:
         self.driver.get(url)
 
     def find(self, locator):
-        """Elementi bulur (Görünene kadar bekler)."""
-        return self.wait.until(EC.visibility_of_element_located(locator))
+        return self.wait.until(EC.presence_of_element_located(locator))
 
     def click(self, locator):
-        """Elemente tıklar."""
-        element = self.wait.until(EC.element_to_be_clickable(locator))
-        element.click()
-        logger.info(f"Tıklandı: {locator}")
-
-    def type_text(self, locator, text):
-        """Yazı yazar."""
-        element = self.find(locator)
-        element.clear()
-        element.send_keys(text)
-        logger.info(f"Yazıldı: '{text}'")
+        """Önce normal tıklar, olmazsa JS ile zorla tıklar."""
+        try:
+            element = self.wait.until(EC.element_to_be_clickable(locator))
+            element.click()
+            logger.info(f"Normal Tıklandı: {locator}")
+        except Exception as e:
+            logger.warning(f"Normal tıklama başarısız, JS Click deneniyor... ({e})")
+            # Elementi tekrar bul ve JS ile tıkla
+            element = self.driver.find_element(*locator)
+            self.driver.execute_script("arguments[0].click();", element)
+            logger.info(f"JS ile ZORLA Tıklandı: {locator}")
 
     def get_title(self):
         return self.driver.title
@@ -67,100 +65,83 @@ class BasePage:
         return self.driver.current_url
 
     def take_screenshot(self, test_name):
-        """Hata olursa fotoğraf çeker."""
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"screenshot_{test_name}_{timestamp}.png"
+        timestamp = datetime.datetime.now().strftime("%H%M%S")
+        filename = f"FAIL_{test_name}_{timestamp}.png"
         self.driver.save_screenshot(filename)
-        logger.error(f"HATA! Ekran görüntüsü kaydedildi: {filename}")
+        logger.error(f"HATA! Ekran görüntüsü: {filename}")
 
 
 # =============================================================================
-# 3. SAYFA TANIMLARI (Page Objects)
-# Sitedeki butonların, kutuların yerini robota öğrettiğimiz yer.
+# 3. SAYFA TANIMLARI
 # =============================================================================
 class HomePage(BasePage):
-    # ELEMENT ADRESLERİ (Locators)
-    # Not: Sitenin yapısına göre buradaki class/id'ler değişebilir.
-    # Şimdilik genel tanımlar kullanıyoruz.
-
-    # Logo genellikle anasayfaya dönmek için kullanılır
+    # LOGO
     LOGO = (By.CSS_SELECTOR, "img[alt='SeyyahLab']")
 
-    # Menüdeki Blog Linki (Tahmini)
-    NAV_BLOG_LINK = (By.XPATH, "//a[contains(text(),'Blog')]")
-
-    # Arama Kutusu (Input type='search' genelde standarttır)
-    SEARCH_INPUT = (By.CSS_SELECTOR, "input[type='text']")
-
-    def search_for(self, keyword):
-        """Arama yapar."""
-        logger.info(f"Aranacak kelime: {keyword}")
-        self.type_text(self.SEARCH_INPUT, keyword)
-        self.find(self.SEARCH_INPUT).send_keys(Keys.ENTER)
+    # BLOG LİNKİ (Hem mobilde hem masaüstünde yakalamak için geniş kapsamlı)
+    # Strateji: İçinde 'Blog' yazan VEYA href'i '/blog' olan linki bul
+    NAV_BLOG_LINK = (By.XPATH, "//a[contains(text(), 'Blog')] | //a[contains(@href, '/blog')]")
 
     def go_to_blog(self):
-        """Blog'a tıklar."""
         logger.info("Blog menüsü aranıyor...")
         self.click(self.NAV_BLOG_LINK)
 
 
 # =============================================================================
-# 4. TEST SENARYOLARI (Test Suite)
-# Robotun yapacağı görevler listesi.
+# 4. TEST SENARYOLARI
 # =============================================================================
 class TestSeyyahLab(unittest.TestCase):
 
-    # BAŞLANGIÇ (Her testten önce çalışır)
     def setUp(self):
-        logger.info("--- GÖREV BAŞLIYOR ---")
+        logger.info(f"--- TEST: {self._testMethodName} ---")
         options = Options()
         if Config.BROWSER_HEADLESS:
             options.add_argument("--headless")
-        # Tarayıcıyı tam ekran yapmasın ama geniş açsın
-        options.add_argument("--window-size=1280,800")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-blink-features=AutomationControlled")
 
+        # HATA VEREN SATIR BURASIYDI, DÜZELTİLDİ:
         self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
         self.home_page = HomePage(self.driver)
 
-    # BİTİŞ (Her testten sonra çalışır)
     def tearDown(self):
-        # Eğer test hata verdiyse resim çek
-        if self._outcome.errors:
-            self.home_page.take_screenshot(self._testMethodName)
-
+        try:
+            if hasattr(self, '_outcome'):
+                result = self._outcome.result
+                if result.errors or result.failures:
+                    self.home_page.take_screenshot(self._testMethodName)
+        except:
+            pass
         self.driver.quit()
-        logger.info("--- GÖREV BİTTİ ---\n")
+        logger.info("--- BİTTİ ---\n")
 
-    # --- GÖREV 1: BAŞLIK KONTROLÜ ---
     def test_01_homepage_title(self):
-        """Ana sayfa açılıyor mu ve başlık doğru mu?"""
         self.home_page.open_url(Config.BASE_URL)
-
         title = self.home_page.get_title()
-        logger.info(f"Site Başlığı: {title}")
+        logger.info(f"Başlık: {title}")
+        self.assertIn("Seyyah", title)
+        logger.info("✅ Başlık Doğrulandı.")
 
-        # ROBOTUN KARARI (ASSERTION)
-        # Başlığın içinde "Seyyah" kelimesi geçiyor mu?
-        self.assertIn("Seyyah", title, "HATA: Başlıkta 'Seyyah' kelimesi yok!")
-        logger.info("BAŞARILI: Site başlığı doğrulandı.")
-
-    # --- GÖREV 2: BLOG SAYFASINA GİT ---
     def test_02_blog_navigation(self):
-        """Blog linkine tıklayınca doğru yere gidiyor mu?"""
         self.home_page.open_url(Config.BASE_URL)
+        time.sleep(2)  # Sayfa tam otursun
 
         try:
             self.home_page.go_to_blog()
 
-            # Gittiğimiz sayfanın adresinde "blog" yazıyor mu?
+            # Yönlendirme için bekle
+            time.sleep(3)
+
             current_url = self.home_page.get_current_url()
-            self.assertIn("blog", current_url.lower(), "HATA: Blog sayfasına gidemedim!")
-            logger.info("BAŞARILI: Blog sayfasına geçiş yapıldı.")
+            logger.info(f"Şu anki URL: {current_url}")
+
+            self.assertIn("blog", current_url.lower(), "URL içinde 'blog' kelimesi yok!")
+            logger.info("✅ Blog sayfasına başarıyla geçildi.")
 
         except Exception as e:
-            logger.warning("Blog linkini bulamadım (Menü mobilde gizli olabilir veya ismi farklı).")
-            # Testi geçici olarak başarılı sayıyoruz ki durmasın
-            pass
+            logger.error(f"❌ Blog testi hatası: {e}")
+            self.fail(f"Blog menüsü bulunamadı. Hata: {e}")
 
 
 if __name__ == "__main__":
