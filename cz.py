@@ -23,7 +23,7 @@ def test_rapor(test_adi, durum, detay=""):
 
 
 # --- AYARLAR ---
-TARGET_URL = "https://www.seyyahlab.com"  # Buraya test edilecek adresi yaz
+TARGET_URL = "http://www.seyyahlab.com/"  # Buraya test edilecek adresi yaz
 # Eğer localhost'ta deneyeceksen: "http://localhost:3000" gibi değiştir.
 
 # Tarayıcıyı başlat
